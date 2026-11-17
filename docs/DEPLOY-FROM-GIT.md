@@ -1,6 +1,6 @@
-# 从 GuaPiMax/pan 仓库拉取代码并升级
+# 从 GuaPiMax/PanPlus 仓库拉取代码并升级
 
-仓库：<https://github.com/GuaPiMax/pan>，部署分支：`main`。
+仓库：<https://github.com/GuaPiMax/PanPlus>，部署分支：`main`。
 
 本版基于官方 V6.0.1，兼容版 `1541-folders-3`，目录扩展标记 `601-1`。你当前的 `1532-folders-1`（V5.6 文件夹扩展版、本地存储）可以直接升级，不用先装 V5.7。
 
@@ -19,7 +19,7 @@
 选择一个站点根目录以外、当前不存在的目录作为代码副本，例如 `/www/pan-code`：
 
 ```bash
-git clone --branch main https://github.com/GuaPiMax/pan.git /www/pan-code
+git clone --branch main https://github.com/GuaPiMax/PanPlus.git /www/pan-code
 cd /www/pan-code
 git log -1 --oneline
 composer install --no-dev --prefer-dist --optimize-autoloader
