@@ -4,7 +4,7 @@ if(defined('IN_CRONLITE'))return;
 define('IN_CRONLITE', true);
 define('SYSTEM_ROOT', dirname(__FILE__).'/');
 define('ROOT', dirname(SYSTEM_ROOT).'/');
-define('VERSION', '1541');
+define('VERSION', '1541-folders-3');
 define('DB_VERSION', '1002');
 date_default_timezone_set('Asia/Shanghai');
 $date = date("Y-m-d H:i:s");
@@ -48,7 +48,7 @@ define('SYS_KEY', $conf['syskey']);
 $password_hash='!@#%!s!0';
 
 if (!$conf['version'] || $conf['version'] < DB_VERSION) {
-    if (!$install) {
+    if (!$install && !defined('IN_ADMIN')) {
 		api_halt('请先完成网站升级', './install/update.php', true);
 		header('Content-type:text/html;charset=utf-8');
         echo '请先完成网站升级！<a href="/install/update.php"><font color=red>点此升级</font></a>';
@@ -98,6 +98,14 @@ if(!is_file(ROOT.'vendor/autoload.php')){
 }
 include_once(ROOT.'vendor/autoload.php');
 
+// Extension 1002 and native V6 1002 are distinct schemas. Gate on our own marker.
+$compatReady = isset($conf['folder_extension']) && $conf['folder_extension'] === \lib\V6Migration::BUILD;
+$authAction = defined('IN_ADMIN') && in_array($_GET['act'] ?? '', ['status','captcha','login','logout'], true);
+if (!$install && !$compatReady && !$authAction) {
+    api_halt('请执行文件夹扩展到 V6 的兼容迁移', './admin/upgrade.php', false);
+    header('Content-Type: text/html; charset=UTF-8');
+    exit('请先完成 V6 兼容升级。<a href="./admin/upgrade.php">打开升级页面</a>');
+}
 if(defined('IN_ADMIN')) return;
 
 $denyip = explode('|',$conf['blackip']);

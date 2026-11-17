@@ -75,6 +75,11 @@ break;
 if($islogin!=1)json_msg(-3, '请先登录');
 
 switch($act){
+case 'folderToken':
+    if(empty($_SESSION['folder_csrf'])) $_SESSION['folder_csrf']=bin2hex(random_bytes(32));
+    json_out(['code'=>0,'token'=>$_SESSION['folder_csrf']]);
+break;
+
 case 'logout':
 	setcookie("admin_token", "", time() - 2592000, '', '', false, true);
 	json_msg(0, '已退出登录');
@@ -187,47 +192,27 @@ case 'delUser':
 break;
 
 case 'fileList':
-	$sql=" 1=1";
-	if(isset($_POST['uid']) && $_POST['uid']!=='') {
-		$uid = intval($_POST['uid']);
-		$sql.=" AND `uid`='$uid'";
-	}
-	if(isset($_POST['dstatus']) && $_POST['dstatus']>-1) {
-		$dstatus = intval($_POST['dstatus']);
-		$sql.=" AND `block`={$dstatus}";
-	}
-	if(isset($_POST['storage_id']) && intval($_POST['storage_id'])>0) {
-		$storage_id = intval($_POST['storage_id']);
-		$sql.=" AND `storage_id`={$storage_id}";
-	}
-	if(isset($_POST['kw']) && $_POST['kw']!=='') {
-		$type = intval($_POST['type']);
-		$kw = trim(daddslashes($_POST['kw']));
-		if($type == 1){
-			$kw = daddslashes(htmlspecialchars(trim($_POST['kw'])));
-			$sql.=" AND `name` LIKE '%{$kw}%'";
-		}elseif($type == 2){
-			$sql.=" AND `hash`='{$kw}'";
-		}elseif($type == 3){
-			$sql.=" AND `type`='{$kw}'";
-		}elseif($type == 4){
-			$sql.=" AND `ip`='{$kw}'";
-		}
-	}
-	$orderby = $_POST['orderby'] == 1 ? 'count desc' : 'id desc';
-	$offset = max(0, intval($_POST['offset']));
-	$limit = min(100, max(1, intval($_POST['limit'])));
-	$total = intval($DB->getColumn("SELECT count(*) from pre_file WHERE{$sql}"));
-	$list = $DB->getAll("SELECT * FROM pre_file WHERE{$sql} order by {$orderby} limit $offset,$limit");
+    try {
+        $folders=new \lib\FolderService($DB);
+        $folder=\lib\FolderService::number($_POST['folder']??0);
+        $result=$folders->listing($folder,$_POST['offset']??0,$_POST['limit']??15,false,$_POST);
+        $total=$result['total'];$list=$result['rows'];
+    } catch (\Throwable $e) { json_msg(-1,'读取目录失败，请检查目录或升级状态。'); }
 	$storage_names = [];
 	foreach($DB->getAll("SELECT id,name FROM pre_storage") as $storage){
 		$storage_names[$storage['id']] = $storage['name'];
 	}
 	$rows = [];
 	foreach($list as $row){
+        if($row['is_folder']) {
+            $rows[]=['id'=>(int)$row['id'],'item_key'=>$row['item_key'],'is_folder'=>1,'is_pinned'=>(int)$row['is_pinned'],'sort_order'=>(int)$row['sort_order'],
+                'name'=>$row['name'],'type'=>'','size'=>0,'uid'=>0,'storage_id'=>0,'storage_name'=>'—','hash'=>'','addtime'=>$row['addtime'],'lasttime'=>null,'ip'=>'','count'=>0,'block'=>0,'hide'=>0,'haspwd'=>0,'view_type'=>null,'fileurl'=>'','viewurl'=>'','pageurl'=>''];
+            continue;
+        }
+
 		$ext = $row['type'] ? $row['type'] : 'file';
 		$rows[] = [
-			'id'=>intval($row['id']),
+			'id'=>intval($row['id']), 'item_key'=>$row['item_key'],'is_folder'=>0,'is_pinned'=>(int)$row['is_pinned'],'sort_order'=>(int)$row['sort_order'],
 			'uid'=>intval($row['uid']),
 			'storage_id'=>intval($row['storage_id']),
 			'storage_name'=>isset($storage_names[$row['storage_id']]) ? $storage_names[$row['storage_id']] : '未知存储',
@@ -248,7 +233,7 @@ case 'fileList':
 			'pageurl'=>'../#/detail?hash='.$row['hash'].(!empty($row['pwd']) ? '&pwd='.urlencode(htmlspecialchars_decode($row['pwd'])) : ''),
 		];
 	}
-	json_out(['code'=>0, 'total'=>$total, 'rows'=>$rows]);
+	json_out(['code'=>0, 'total'=>$total, 'rows'=>$rows,'folder'=>$folders->folder($folder),'path'=>$folders->path($folder),'mode'=>$result['mode'],'folders'=>$result['folders']]);
 break;
 case 'setBlock':
 	$id=intval($_POST['id']);

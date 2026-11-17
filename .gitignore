@@ -1,4 +1,12 @@
-/.vscode
-/vendor
-/composer.lock
+/.vscode/
+/vendor/
+/config.php
 /install/install.lock
+/file/*
+!/file/.htaccess
+/.local-tools/
+/dist/
+/design-previews/
+*.log
+.env
+.env.*

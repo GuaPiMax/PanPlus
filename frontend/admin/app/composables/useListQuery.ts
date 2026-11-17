@@ -38,7 +38,7 @@ export function useListQuery<T extends Record<string, string>>(defaults: T) {
   }
 
   const search = () => router.push({ query: buildQuery(filters) })
-  const reset = () => router.push({ query: {} })
+  const reset = () => router.push({ query: route.query.folder ? {folder:String(route.query.folder)} : {} })
   const setPage = (p: number) => router.push({ query: buildQuery(query.value, { page: p > 1 ? p : undefined }) })
   const setPagesize = (size: number) => router.push({
     query: buildQuery(query.value, { pagesize: size !== PAGE_SIZES[0] ? size : undefined })

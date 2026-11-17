@@ -408,6 +408,26 @@ break;
 case 'filelist':
 	$mine = isset($_GET['m']) && $_GET['m']=='mine';
 	$searchable = $conf['filesearch']==1 || $mine;
+    if(!$mine) {
+        try {
+            $folders=new \lib\FolderService($DB);
+            $folder=\lib\FolderService::number($_GET['folder']??0);
+            $pagesize=max(1,min(50,(int)($_GET['pagesize']??15)));
+            $page=max(1,(int)($_GET['page']??1));
+            $kw=$conf['filesearch']==1 && isset($_GET['kw']) && is_string($_GET['kw']) ? trim($_GET['kw']) : '';
+            $data=$folders->listing($folder,($page-1)*$pagesize,$pagesize,true,['kw'=>$kw]);
+            $list=[];
+            foreach($data['rows'] as $r) $list[]=[
+                'id'=>(int)$r['id'],'item_key'=>$r['item_key'],'is_folder'=>(int)$r['is_folder'],'is_pinned'=>(int)$r['is_pinned'],
+                'name'=>$r['is_folder']?$r['name']:htmlspecialchars_decode($r['name']), 'type'=>(string)$r['type'],'size'=>(int)$r['size'],
+                'hash'=>$r['hash'],'addtime'=>$r['addtime'],'ip'=>preg_replace('/\d+$/','*',$r['ip']),'block'=>(int)$r['block']
+            ];
+            exit(json_encode(['code'=>0,'total'=>$data['total'],'pages'=>(int)ceil($data['total']/$pagesize),'page'=>$page,'pagesize'=>$pagesize,
+                'list'=>$list,'folders'=>$data['folders'],'folder'=>$folders->folder($folder),'path'=>$folders->path($folder),'mode'=>$data['mode']],JSON_UNESCAPED_UNICODE));
+        } catch(\InvalidArgumentException $e) { exit(json_encode(['code'=>-1,'msg'=>$e->getMessage()])); }
+        catch(\Throwable $e) { error_log($e->getMessage());exit('{"code":-1,"msg":"读取目录失败，请检查升级状态。"}'); }
+    }
+
 	if($mine){
 		if($islogin2){
 			$sql = " uid='".intval($uid)."'";

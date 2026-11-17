@@ -3,6 +3,9 @@ import type { DropdownMenuItem, TableColumn } from '@nuxt/ui'
 
 interface FileItem {
   id: number
+  item_key?: string
+  is_folder?: number
+  is_pinned?: number
   name: string
   type: string
   size: number
@@ -40,6 +43,10 @@ const searchable = computed(() => props.mine || site.value.filesearch === 1)
 const loading = ref(false)
 const list = ref<FileItem[]>([])
 const total = ref(0)
+const folderId = computed(() => props.mine ? 0 : Number(route.query.folder || 0))
+const folderPath = ref<{id:number;name:string}[]>([])
+const folderCount = ref(0)
+const sortLabel = ref('手动排序')
 const pages = ref(0)
 
 async function fetchList() {
@@ -47,10 +54,14 @@ async function fetchList() {
   try {
     const data = await get('filelist', {
       m: props.mine ? 'mine' : undefined,
+      folder: props.mine ? undefined : folderId.value,
       kw: kw.value || undefined,
       page: page.value,
       pagesize
     })
+    folderPath.value = data.path || []
+    folderCount.value = data.folders || 0
+    sortLabel.value = ({manual:'手动排序',name_asc:'名称升序',name_desc:'名称降序',time_desc:'时间从新到旧',time_asc:'时间从旧到新'} as Record<string,string>)[data.mode] || '时间从新到旧'
     list.value = data.list || []
     total.value = data.total || 0
     pages.value = data.pages || 0
@@ -63,7 +74,7 @@ async function fetchList() {
   }
 }
 
-watch(() => [page.value, kw.value, props.mine], fetchList, { immediate: true })
+watch(() => [page.value, kw.value, props.mine, folderId.value], fetchList, { immediate: true })
 
 function search() {
   router.push({ query: { ...route.query, kw: keyword.value.trim() || undefined, page: undefined } })
@@ -80,7 +91,7 @@ function changePage(p: number) {
 }
 
 const downUrl = (row: FileItem) => `./down.php/${row.hash}.${row.type || 'file'}${row.pwd ? `&${row.pwd}` : ''}`
-const detailTo = (row: FileItem) => ({ path: '/detail', query: { hash: row.hash, pwd: row.pwd || undefined } })
+const detailTo = (row: FileItem) => row.is_folder ? ({path:'/',query:{folder:String(row.id)}}) : ({path:'/detail',query:{hash:row.hash,pwd:row.pwd || undefined}})
 
 // ---------- 我的文件：选择与批量操作 ----------
 const selected = ref<string[]>([])
@@ -222,6 +233,7 @@ const columns = computed<TableColumn<FileItem>[]>(() => props.mine
           <UButton type="submit" label="搜索" />
         </form>
       </div>
+      <nav v-if="!mine" aria-label="文件夹路径" class="mt-4 flex flex-wrap items-center gap-2 text-sm"><NuxtLink to="/" class="text-primary">根目录</NuxtLink><template v-for="part in folderPath" :key="part.id"><span>/</span><NuxtLink :to="{path:'/',query:{folder:String(part.id)}}" class="text-primary break-all">{{ part.name }}</NuxtLink></template><span class="ms-auto text-muted">{{ kw ? '全站搜索' : sortLabel }}</span></nav>
       <div v-if="kw" class="mt-3 flex items-center gap-2 text-sm">
         <span class="text-(--ui-text-muted)">搜索：</span>
         <UBadge color="primary" variant="subtle">{{ kw }}</UBadge>
@@ -276,8 +288,8 @@ const columns = computed<TableColumn<FileItem>[]>(() => props.mine
       </template>
       <template #action-cell="{ row }">
         <div class="flex items-center gap-1 whitespace-nowrap">
-          <UButton :href="downUrl(row.original)" size="xs" variant="soft" icon="i-lucide-download" label="下载" external />
-          <UButton :to="detailTo(row.original)" size="xs" variant="soft" color="neutral" icon="i-lucide-eye" label="查看" />
+          <UButton v-if="!row.original.is_folder" :href="downUrl(row.original)" size="xs" variant="soft" icon="i-lucide-download" label="下载" external />
+          <UButton :to="detailTo(row.original)" size="xs" variant="soft" color="neutral" icon="i-lucide-eye" :label="row.original.is_folder ? '进入' : '查看'" />
           <UDropdownMenu v-if="mine" :items="rowMenu(row.original)" :content="{ align: 'start' }">
             <UButton size="xs" variant="ghost" color="neutral" icon="i-lucide-ellipsis" aria-label="更多操作" />
           </UDropdownMenu>
@@ -285,8 +297,8 @@ const columns = computed<TableColumn<FileItem>[]>(() => props.mine
       </template>
       <template #name-cell="{ row }">
         <NuxtLink :to="detailTo(row.original)" class="flex items-center gap-2 hover:text-primary max-w-56 lg:max-w-72 xl:max-w-md">
-          <UIcon :name="typeIcon(row.original.type)" class="size-5 shrink-0 text-primary/80" />
-          <span class="truncate" :title="row.original.name">{{ row.original.name }}</span>
+          <UIcon :name="row.original.is_folder ? 'i-lucide-folder' : typeIcon(row.original.type)" class="size-5 shrink-0 text-primary/80" />
+          <span class="truncate" :title="row.original.name">{{ row.original.name }}</span><UBadge v-if="!mine && row.original.is_pinned" size="sm" variant="subtle">置顶</UBadge>
           <UBadge v-if="row.original.block === 1" color="error" variant="subtle" size="sm">已冻结</UBadge>
           <UBadge v-else-if="row.original.block === 2" color="warning" variant="subtle" size="sm">审核中</UBadge>
           <UTooltip v-if="mine && row.original.hide" text="不在首页文件列表显示">
@@ -298,10 +310,10 @@ const columns = computed<TableColumn<FileItem>[]>(() => props.mine
         </NuxtLink>
       </template>
       <template #size-cell="{ row }">
-        <span class="whitespace-nowrap">{{ sizeFormat(row.original.size) }}</span>
+        <span class="whitespace-nowrap">{{ row.original.is_folder ? "—" : sizeFormat(row.original.size) }}</span>
       </template>
       <template #type-cell="{ row }">
-        <UBadge color="info" variant="subtle">{{ row.original.type || '未知' }}</UBadge>
+        <UBadge color="info" variant="subtle">{{ row.original.is_folder ? '文件夹' : (row.original.type || '未知') }}</UBadge>
       </template>
       <template #addtime-cell="{ row }">
         <span class="whitespace-nowrap text-(--ui-text-muted)">{{ row.original.addtime }}</span>
@@ -332,7 +344,7 @@ const columns = computed<TableColumn<FileItem>[]>(() => props.mine
       <div
         v-for="item in list"
         v-else
-        :key="item.id"
+        :key="item.item_key || item.id"
         class="p-4 flex items-start gap-3 transition-colors"
         :class="{ 'opacity-60': loading, 'bg-primary/5': selected.includes(item.hash) }"
       >
@@ -344,13 +356,13 @@ const columns = computed<TableColumn<FileItem>[]>(() => props.mine
           @update:model-value="(v: boolean | 'indeterminate') => toggleRow(item.hash, v)"
         />
         <div class="size-10 shrink-0 rounded-lg bg-primary/10 flex items-center justify-center">
-          <UIcon :name="typeIcon(item.type)" class="size-6 text-primary" />
+          <UIcon :name="item.is_folder ? 'i-lucide-folder' : typeIcon(item.type)" class="size-6 text-primary" />
         </div>
         <div class="min-w-0 flex-1">
-          <NuxtLink :to="detailTo(item)" class="block font-medium break-all line-clamp-2">{{ item.name }}</NuxtLink>
+          <NuxtLink :to="detailTo(item)" class="block font-medium break-all line-clamp-2">{{ item.name }}</NuxtLink><UBadge v-if="!mine && item.is_pinned" size="sm" variant="subtle">置顶</UBadge>
           <div class="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-(--ui-text-muted)">
-            <span>{{ sizeFormat(item.size) }}</span>
-            <span class="uppercase">{{ item.type || '未知' }}</span>
+            <span>{{ item.is_folder ? "—" : sizeFormat(item.size) }}</span>
+            <span class="uppercase">{{ item.is_folder ? '文件夹' : (item.type || '未知') }}</span>
             <span>{{ item.addtime }}</span>
             <span v-if="mine">下载 {{ item.count ?? 0 }} 次</span>
             <span v-else>{{ item.ip }}</span>
@@ -360,8 +372,8 @@ const columns = computed<TableColumn<FileItem>[]>(() => props.mine
             <UBadge v-else-if="item.block === 2" color="warning" variant="subtle" size="sm">审核中</UBadge>
           </div>
           <div class="mt-2 flex gap-2">
-            <UButton :href="downUrl(item)" size="xs" variant="soft" icon="i-lucide-download" label="下载" external />
-            <UButton :to="detailTo(item)" size="xs" variant="soft" color="neutral" icon="i-lucide-eye" label="查看" />
+            <UButton v-if="!item.is_folder" :href="downUrl(item)" size="xs" variant="soft" icon="i-lucide-download" label="下载" external />
+            <UButton :to="detailTo(item)" size="xs" variant="soft" color="neutral" icon="i-lucide-eye" :label="item.is_folder ? '进入' : '查看'" />
             <UDropdownMenu v-if="mine" :items="rowMenu(item)" :content="{ align: 'start' }">
               <UButton size="xs" variant="soft" color="neutral" icon="i-lucide-ellipsis" aria-label="更多操作" />
             </UDropdownMenu>
@@ -373,7 +385,7 @@ const columns = computed<TableColumn<FileItem>[]>(() => props.mine
     <template #footer>
       <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between text-sm">
         <span class="text-(--ui-text-muted)">
-          共有 {{ total }} 个文件，当前第 {{ page }} 页，共 {{ pages }} 页
+          共有 {{ mine ? total : total - folderCount }} 个文件<template v-if="!mine">、{{ folderCount }} 个文件夹</template>，当前第 {{ page }} 页，共 {{ pages }} 页
         </span>
         <UPagination
           v-if="total > pagesize"

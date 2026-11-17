@@ -3,7 +3,7 @@
 // 用法：node scripts/deploy.mjs site            → 网站根目录
 //       node scripts/deploy.mjs admin [目录名]  → 后台目录（默认 admin，后台目录改名后可传入新名称）
 import { cp, rm, access, readFile, writeFile } from 'node:fs/promises'
-import { resolve, dirname } from 'node:path'
+import { resolve, dirname, relative, isAbsolute } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 const here = dirname(fileURLToPath(import.meta.url))
@@ -40,6 +40,11 @@ if (!(await exists(destDir))) {
   process.exit(1)
 }
 
+// Validate every removal target before recursive build-output cleanup.
+for (const output of [resolve(destDir, assetsDir), resolve(destDir, '_nuxt'), resolve(destDir, 'index.html')]) {
+  const part = relative(siteRoot, output)
+  if (!part || part.startsWith('..') || isAbsolute(part)) throw new Error('Output path outside site root: ' + output)
+}
 if (target === 'site') await rm(resolve(destDir, '_nuxt'), { recursive: true, force: true })
 await rm(resolve(destDir, assetsDir), { recursive: true, force: true })
 await cp(resolve(publicDir, assetsDir), resolve(destDir, assetsDir), { recursive: true })

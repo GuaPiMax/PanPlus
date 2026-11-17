@@ -6,6 +6,10 @@ useHead({ title: '文件管理' })
 
 interface FileRow extends PreviewFile {
   id: number
+  item_key: string
+  is_folder: number
+  is_pinned: number
+  sort_order: number
   uid: number
   storage_id: number
   storage_name: string
@@ -21,6 +25,11 @@ interface FileRow extends PreviewFile {
   pageurl: string
 }
 
+const route = useRoute()
+const folderId = computed(() => Number(route.query.folder || 0))
+const manager = ref<any>(null)
+const folderPath = ref<{id:number;name:string}[]>([])
+const folderMode = ref('manual')
 const { get, post } = useApi()
 const toast = useToast()
 const confirm = useConfirm()
@@ -31,7 +40,8 @@ const { page, pagesize, query, filters, search, reset, setPage, setPagesize } = 
   uid: '',
   dstatus: '-1',
   storage_id: '0',
-  orderby: '0'
+  orderby: '0',
+  folder: '0'
 })
 
 const storageOptions = ref([{ label: '全部存储', value: '0' }])
@@ -60,13 +70,14 @@ const PAGE_SIZE_OPTIONS = PAGE_SIZES.map(n => ({ label: `${n} 条/页`, value: n
 const loading = ref(false)
 const list = ref<FileRow[]>([])
 const total = ref(0)
-const selected = ref<number[]>([])
+const selected = ref<string[]>([])
 
 async function fetchList() {
   loading.value = true
   try {
     const q = query.value
     const data = await post('fileList', {
+      folder: folderId.value,
       type: q.type,
       kw: q.kw,
       uid: q.uid,
@@ -76,9 +87,11 @@ async function fetchList() {
       offset: (page.value - 1) * pagesize.value,
       limit: pagesize.value
     })
+    folderPath.value=data.path || []
+    folderMode.value=data.mode || 'manual'
     list.value = data.rows || []
     total.value = data.total || 0
-    selected.value = selected.value.filter(id => list.value.some(row => row.id === id))
+    selected.value = selected.value.filter(id => list.value.some(row => row.item_key === id))
   } catch (e: any) {
     toast.add({ title: e?.message || '加载文件列表失败', color: 'error' })
   } finally {
@@ -86,16 +99,16 @@ async function fetchList() {
   }
 }
 
-watch(() => [page.value, pagesize.value, query.value], fetchList, { immediate: true, deep: true })
+watch(() => [page.value, pagesize.value, query.value, folderId.value], fetchList, { immediate: true, deep: true })
 
-const allSelected = computed(() => list.value.length > 0 && list.value.every(row => selected.value.includes(row.id)))
+const allSelected = computed(() => list.value.length > 0 && list.value.every(row => selected.value.includes(row.item_key)))
 const someSelected = computed(() => selected.value.length > 0 && !allSelected.value)
 
 function toggleAll(value: boolean | 'indeterminate') {
-  selected.value = value === true ? list.value.map(row => row.id) : []
+  selected.value = value === true ? list.value.map(row => row.item_key) : []
 }
 
-function toggleRow(id: number, value: boolean | 'indeterminate') {
+function toggleRow(id: string, value: boolean | 'indeterminate') {
   selected.value = value === true ? [...new Set([...selected.value, id])] : selected.value.filter(v => v !== id)
 }
 
@@ -150,7 +163,9 @@ async function operation(status: 0 | 1 | 2) {
     return
   }
   if (batching.value) return
-  const request = () => post('operation', { status, checkbox: selected.value })
+  const fileIds = list.value.filter(r=>!r.is_folder && selected.value.includes(r.item_key)).map(r=>r.id)
+  if(!fileIds.length){toast.add({title:'此批量操作只处理文件，请使用目录删除或批量移动',color:'warning'});return}
+  const request = () => post('operation', { status, checkbox: fileIds })
   batching.value = true
   try {
     let res: { msg?: string } | undefined
@@ -199,7 +214,7 @@ function edit(row: FileRow) {
 const ipUrl = (ip: string) => `https://m.ip138.com/iplookup.asp?ip=${encodeURIComponent(ip)}`
 const userTo = (uid: number) => ({ path: '/user', query: { type: '1', kw: String(uid) } })
 
-const columnPinning = { right: ['block', 'action'] }
+const columnPinning = { right: ['action'] }
 const pinWidth = (px: number) => {
   const width = `${px}px`
   return { th: { width, minWidth: width }, td: { width, minWidth: width } }
@@ -215,8 +230,9 @@ const columns: TableColumn<FileRow>[] = [
   { accessorKey: 'storage_name', header: '存储' },
   { accessorKey: 'addtime', header: '上传日期/上次下载' },
   { accessorKey: 'ip', header: '上传IP/下载量' },
+  { accessorKey: 'sort_order', header: '排序数字' },
   { accessorKey: 'block', header: '状态', size: 80, meta: { style: pinWidth(80), class: { th: 'shadow-[-8px_0_8px_-6px_rgb(15_23_42/0.12)]', td: 'shadow-[-8px_0_8px_-6px_rgb(15_23_42/0.12)]' } } },
-  { id: 'action', header: '操作', size: 168, meta: { style: pinWidth(168) } }
+  { id: 'action', header: '操作', size: 300, meta: { style: pinWidth(300) } }
 ]
 </script>
 
@@ -229,6 +245,7 @@ const columns: TableColumn<FileRow>[] = [
     </template>
 
     <div class="space-y-4">
+      <FolderManager ref="manager" :rows="list" :selected="selected" :mode="folderMode" :path="folderPath" @refresh="fetchList" />
       <UCard :ui="{ body: 'p-3 sm:p-4' }">
         <form class="flex flex-wrap items-center gap-2" @submit.prevent="search">
           <UFieldGroup class="w-full sm:w-auto">
@@ -258,29 +275,34 @@ const columns: TableColumn<FileRow>[] = [
             <UCheckbox :model-value="someSelected ? 'indeterminate' : allSelected" aria-label="全选" @update:model-value="toggleAll" />
           </template>
           <template #select-cell="{ row }">
-            <UCheckbox :model-value="selected.includes(row.original.id)" aria-label="选择" @update:model-value="(v: boolean | 'indeterminate') => toggleRow(row.original.id, v)" />
+            <UCheckbox :model-value="selected.includes(row.original.item_key)" aria-label="选择" @update:model-value="(v: boolean | 'indeterminate') => toggleRow(row.original.item_key, v)" />
           </template>
           <template #id-cell="{ row }">
             <span class="font-semibold">{{ row.original.id }}</span>
           </template>
           <template #uid-cell="{ row }">
-            <NuxtLink v-if="row.original.uid > 0" :to="userTo(row.original.uid)" class="text-primary hover:underline">{{ row.original.uid }}</NuxtLink>
+            <span v-if="row.original.is_folder">—</span>
+            <NuxtLink v-else-if="row.original.uid > 0" :to="userTo(row.original.uid)" class="text-primary hover:underline">{{ row.original.uid }}</NuxtLink>
             <span v-else class="text-(--ui-text-muted)">游客</span>
           </template>
           <template #name-cell="{ row }">
+            <NuxtLink v-if="row.original.is_folder" :to="{path:'/file',query:{folder:String(row.original.id)}}" class="flex gap-2 items-center text-primary"><UIcon name="i-lucide-folder" class="size-5" />{{ row.original.name }}<UBadge v-if="row.original.is_pinned" size="sm" variant="subtle">置顶</UBadge></NuxtLink>
+            <template v-else>
             <div class="flex max-w-64 items-center gap-2 xl:max-w-sm 2xl:max-w-md">
               <UIcon :name="typeIcon(row.original.type)" class="size-5 shrink-0 text-primary/80" />
               <a :href="row.original.fileurl" class="truncate hover:text-primary" :title="`${row.original.name}（点击下载）`">{{ row.original.name }}</a>
+              <UBadge v-if="row.original.is_pinned" size="sm" variant="subtle">置顶</UBadge>
               <UIcon v-if="row.original.haspwd" name="i-lucide-lock" class="size-3.5 shrink-0 text-(--ui-text-muted)" title="已设置下载密码" />
               <UIcon v-if="row.original.hide" name="i-lucide-eye-off" class="size-3.5 shrink-0 text-(--ui-text-muted)" title="首页隐藏" />
               <UButton v-if="row.original.view_type" size="xs" variant="link" class="shrink-0 px-0" label="预览" @click="preview(row.original)" />
             </div>
           </template>
+          </template>
           <template #size-cell="{ row }">
-            <span class="whitespace-nowrap">{{ sizeFormat(row.original.size) }}</span>
+            <span class="whitespace-nowrap">{{ row.original.is_folder ? "—" : sizeFormat(row.original.size) }}</span>
           </template>
           <template #type-cell="{ row }">
-            <UBadge color="info" variant="subtle">{{ row.original.type || '未知' }}</UBadge>
+            <UBadge color="info" variant="subtle">{{ row.original.is_folder ? '文件夹' : (row.original.type || '未知') }}</UBadge>
           </template>
           <template #storage_name-cell="{ row }">
             <span class="whitespace-nowrap text-xs text-(--ui-text-muted)">{{ row.original.storage_name }}</span>
@@ -291,20 +313,25 @@ const columns: TableColumn<FileRow>[] = [
               <div>{{ row.original.lasttime || '-' }}</div>
             </div>
           </template>
-          <template #ip-cell="{ row }">
+          <template #ip-cell="{ row }"><span v-if="row.original.is_folder">—</span><template v-else>
             <div class="text-xs leading-5">
               <a :href="ipUrl(row.original.ip)" target="_blank" rel="noreferrer" class="text-primary hover:underline">{{ row.original.ip }}</a>
               <div class="font-semibold">{{ row.original.count }}</div>
             </div>
-          </template>
-          <template #block-cell="{ row }">
-            <UButton size="xs" variant="soft" :color="statusMeta(row.original.block).color" :label="statusMeta(row.original.block).label" :title="statusMeta(row.original.block).tip" :loading="blocking[row.original.id]" @click="setBlock(row.original)" />
+          </template></template>
+          <template #sort_order-cell="{ row }"><UInput v-model="row.original.sort_order" type="number" aria-label="排序数字" class="w-24" /></template>
+          <template #block-cell="{ row }"><span v-if="row.original.is_folder">—</span>
+            <UButton v-if="!row.original.is_folder" size="xs" variant="soft" :color="statusMeta(row.original.block).color" :label="statusMeta(row.original.block).label" :title="statusMeta(row.original.block).tip" :loading="blocking[row.original.id]" @click="setBlock(row.original)" />
           </template>
           <template #action-cell="{ row }">
-            <div class="flex items-center gap-1 whitespace-nowrap">
-              <UButton size="xs" variant="soft" color="info" label="编辑" @click="edit(row.original)" />
+            <div class="flex flex-wrap items-center gap-1">
+              <UButton size="xs" variant="soft" color="neutral" label="移动" @click="manager?.move([row.original.item_key])" />
+              <UButton size="xs" variant="soft" color="neutral" :label="row.original.is_pinned?'取消置顶':'置顶'" @click="manager?.pin(row.original)" />
+              <template v-if="row.original.is_folder"><UButton size="xs" variant="soft" label="重命名" @click="manager?.rename(row.original)" /><UButton size="xs" variant="soft" color="error" label="删除目录" @click="manager?.remove(row.original)" /></template>
+              <template v-else><UButton size="xs" variant="soft" color="info" label="编辑" @click="edit(row.original)" />
               <UButton size="xs" variant="soft" color="warning" label="查看" :href="row.original.pageurl" target="_blank" external />
               <UButton size="xs" variant="soft" color="error" label="删除" @click="delFile(row.original)" />
+              </template>
             </div>
           </template>
           <template #empty>
@@ -327,8 +354,10 @@ const columns: TableColumn<FileRow>[] = [
             </div>
           </template>
           <div v-else-if="!list.length" class="py-10 text-center text-(--ui-text-muted)">没有找到文件</div>
-          <div v-for="item in list" v-else :key="item.id" class="flex items-start gap-3 p-4" :class="{ 'opacity-60': loading }">
-            <UCheckbox class="mt-2.5" :model-value="selected.includes(item.id)" @update:model-value="(v: boolean | 'indeterminate') => toggleRow(item.id, v)" />
+          <div v-for="item in list" v-else :key="item.item_key" class="flex items-start gap-3 p-4" :class="{ 'opacity-60': loading }">
+            <UCheckbox class="mt-2.5" :model-value="selected.includes(item.item_key)" @update:model-value="(v: boolean | 'indeterminate') => toggleRow(item.item_key, v)" />
+            <div v-if="item.is_folder" class="min-w-0 flex-1 space-y-3"><NuxtLink :to="{path:'/file',query:{folder:String(item.id)}}" class="flex gap-2 items-center text-primary break-all"><UIcon name="i-lucide-folder" class="size-6 shrink-0" />{{ item.name }}<UBadge v-if="item.is_pinned" variant="subtle">置顶</UBadge></NuxtLink><UInput v-model="item.sort_order" type="number" aria-label="排序数字" class="w-24" /><div class="flex flex-wrap gap-2"><UButton size="xs" variant="soft" label="重命名" @click="manager?.rename(item)" /><UButton size="xs" variant="soft" label="移动" @click="manager?.move([item.item_key])" /><UButton size="xs" variant="soft" :label="item.is_pinned?'取消置顶':'置顶'" @click="manager?.pin(item)" /><UButton size="xs" color="error" variant="soft" label="删除目录" @click="manager?.remove(item)" /></div></div>
+            <template v-else>
             <div class="flex size-10 shrink-0 items-center justify-center rounded-lg bg-primary/10">
               <UIcon :name="typeIcon(item.type)" class="size-6 text-primary" />
             </div>
@@ -345,7 +374,8 @@ const columns: TableColumn<FileRow>[] = [
                 <span>{{ item.addtime }}</span>
                 <a :href="ipUrl(item.ip)" target="_blank" rel="noreferrer">{{ item.ip }}</a>
               </div>
-              <div class="mt-2 flex flex-wrap gap-1.5">
+              <UBadge v-if="item.is_pinned" variant="subtle">置顶</UBadge><UInput v-model="item.sort_order" type="number" aria-label="排序数字" class="mt-2 w-24" />
+              <div class="mt-2 flex flex-wrap gap-1.5"><UButton size="xs" variant="soft" label="移动" @click="manager?.move([item.item_key])" /><UButton size="xs" variant="soft" :label="item.is_pinned?'取消置顶':'置顶'" @click="manager?.pin(item)" />
                 <UButton size="xs" variant="soft" :color="statusMeta(item.block).color" :label="statusMeta(item.block).label" :loading="blocking[item.id]" @click="setBlock(item)" />
                 <UButton v-if="item.view_type" size="xs" variant="soft" color="neutral" label="预览" @click="preview(item)" />
                 <UButton size="xs" variant="soft" color="info" label="编辑" @click="edit(item)" />
@@ -353,13 +383,14 @@ const columns: TableColumn<FileRow>[] = [
                 <UButton size="xs" variant="soft" color="error" label="删除" @click="delFile(item)" />
               </div>
             </div>
+            </template>
           </div>
         </div>
 
         <template #footer>
           <div class="flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between">
             <div class="flex items-center gap-3">
-              <span class="text-(--ui-text-muted)">共 {{ total }} 个文件</span>
+              <span class="text-(--ui-text-muted)">共 {{ total }} 个项目</span>
               <USelect :model-value="pagesize" :items="PAGE_SIZE_OPTIONS" size="sm" class="w-28" @update:model-value="(v: number) => setPagesize(v)" />
             </div>
             <UPagination
